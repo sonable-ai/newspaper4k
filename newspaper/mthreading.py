@@ -10,11 +10,12 @@ from typing import AsyncGenerator, Generator, List, Union
 import newspaper
 from newspaper.article import Article
 from newspaper.source import Source
+import asyncio
 
 
-def fetch_news(
+async def fetch_news(
     news_list: List[Union[str, Article, Source]], threads: int = 5
-) -> Generator[Article | Source, None, None]:
+) -> AsyncGenerator[Article, None]:
     """
     Fetch news from a list of sources, articles, or both. Threads will be
     allocated to download and parse the sources or articles. If urls are
@@ -39,7 +40,7 @@ def fetch_news(
         List[Union[Article, Source]]: List of articles or sources.
     """
 
-    async def get_item(item: Union[str, Article, Source]) -> AsyncGenerator[Article,None,None]:
+    async def get_item(item: Union[str, Article, Source]) -> AsyncGenerator[Article, None]:
         if isinstance(item, Article):
             logging.error(item.title)
             item.download()
@@ -49,7 +50,9 @@ def fetch_news(
             logging.error(item.article_urls())
             #item.download_articles()
             #item.parse_articles()
-            return item.stream_articles()
+            x = item.stream_articles()
+            async for f in x:
+                yield f
         elif isinstance(item, str):
             logging.error(str)
             yield newspaper.article(url=item)
@@ -57,10 +60,14 @@ def fetch_news(
             raise TypeError(f"Invalid type {type(item)} for item {item}")
 
     logging.error("Called Fetch News")
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
     with ThreadPoolExecutor(max_workers=threads) as tpe:
         _futures = [tpe.submit(get_item, item) for item in news_list]
         for future in futures.as_completed(_futures):
             logging.error("YIELD")
             result = future.result()
-            yield result
+            async for article in result:
+                logging.error('...')
+                yield article

@@ -495,7 +495,19 @@ class Source:
         self.articles = articles[:limit]
         log.debug("%d articles generated and cutoff at %d", len(articles), limit)
 
-    async def stream_articles(self) -> AsyncGenerator[Article,None,None]: #TODO: ALYSSA START HERE FOR STREAMING ARTICLES
+    def dl_subprocess(self, t: tuple[Response, Article]):
+        r = t[0]
+        a = t[1]
+        try:
+            html = network.get_html(a.url, response=r)
+            a.download(input_html=html)
+            ret = a.parse()
+            logging.error("Downloaded " + a.url)
+            return ret
+        except Exception as e:
+            logging.error(e)
+
+    async def stream_articles(self) -> AsyncGenerator[Article,None]: #TODO: ALYSSA START HERE FOR STREAMING ARTICLES
         """Starts the ``download()`` for all :any:`Article` objects
         in the :any:`Source.articles` property. It can run single threaded or
         multi-threaded.
@@ -520,28 +532,19 @@ class Source:
         # add `dl` function in thread pool for each url successfully queried
         # yield response from `dl` function each time it completes
 
-        responses = network.multithread_request(url_list, self.config)
+        responses = network.multithread_request_streaming(url_list, self.config)
         # Note that the responses are returned in original order
         with ProcessPoolExecutor(max_workers=threads) as tpe:
-            def dl(a: Article, r: Response):
-                try:
-                    html = network.get_html(a.url, response=r)
-                    a.download(input_html=html)
-                    ret = a.parse()
-                    logging.error("Downloaded " + a.url)
-                    return ret
-                except Exception as e:
-                    logging.error(e)
-                    failed_articles.append(a)
             
             r = list(zip(responses, self.articles))
 
-            func = functools.partial(dl)
-            results = tpe.map(func, r)
+            logging.error(len(r))
+            logging.error(r[0])
 
-            for f in await next(results):
-                logging.error(str(f))
-                yield f
+            #func = functools.partial(dl)
+            for result in tpe.map(self.dl_subprocess, r):
+                logging.error(str(result))
+                yield result
 
         if len(failed_articles) > 0:
             log.warning(
